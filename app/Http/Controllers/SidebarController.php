@@ -89,6 +89,15 @@ class SidebarController extends Controller
         ];
     })->values();
 
+    // Sort categories with Theory at the top, then alphabetically
+    $categoriesWithGrades = $categoriesWithGrades->sortBy(function ($category) {
+        // Theory gets priority 0, everything else gets priority 1 + alphabetical
+        if (strtolower($category['category_name']) === 'theory') {
+            return '0_' . $category['category_name'];
+        }
+        return '1_' . $category['category_name'];
+    })->values();
+
     // Return the response
     return response()->json($categoriesWithGrades);
 }

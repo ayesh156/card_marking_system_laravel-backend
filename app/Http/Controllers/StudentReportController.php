@@ -781,6 +781,37 @@ class StudentReportController extends Controller
         $grades = $request->input('grades');
         $category = $request->input('category');
 
+        // ✅ Extract academic year from grade name if present (e.g., "Grade 11 2025" → 2025)
+        // This allows historical grades to show their respective year's data
+        $gradeYear = null;
+        foreach ($grades as $grade) {
+            if (preg_match('/\b(20\d{2})\b/', $grade, $matches)) {
+                $gradeYear = (int) $matches[1];
+                break;
+            }
+        }
+
+        // If grade has a specific year, use that year's data; otherwise use current year
+        $dataYearId = $currentYearId;
+        $dataMonthId = $currentMonthId;
+        $dataYear = $currentYearMonth['year'];
+        
+        if ($gradeYear) {
+            $yearRecord = Year::where('year', $gradeYear)->first();
+            if ($yearRecord) {
+                $dataYearId = $yearRecord->id;
+                $dataYear = $gradeYear;
+                // For historical years, default to December (last month of academic year)
+                // unless we're viewing the current year
+                if ($gradeYear < $currentYearMonth['year']) {
+                    $decemberRecord = Month::where('month', 'December')->first();
+                    if ($decemberRecord) {
+                        $dataMonthId = $decemberRecord->id;
+                    }
+                }
+            }
+        }
+
         // Step 1: Search the 'categories' table
         $categoryRecord = Category::where('category_name', $category)->first();
         if (!$categoryRecord) {
@@ -876,12 +907,13 @@ class StudentReportController extends Controller
         }
 
         // Step 7: Check for data in the 'students_has_tuitions' table and determine registration and special status
-        $studentData = $studentTuitions->map(function ($studentTuition) use ($exactMatchingTuitions, $globalWhatsappCounts, $currentYearId, $currentMonthId) {
+        // Use $dataYearId and $dataMonthId for historical grade years (e.g., Grade 11 2025)
+        $studentData = $studentTuitions->map(function ($studentTuition) use ($exactMatchingTuitions, $globalWhatsappCounts, $dataYearId, $dataMonthId) {
             $student = $studentTuition->student;
             $report = StudentReport::where('student_id', $student->id)
                 ->whereIn('tuition_id', $exactMatchingTuitions->pluck('id'))
-                ->where('year_id', $currentYearId)      // ✅ FILTER by current year
-                ->where('month_id', $currentMonthId)    // ✅ FILTER by current month
+                ->where('year_id', $dataYearId)      // ✅ FILTER by data year (may be historical)
+                ->where('month_id', $dataMonthId)    // ✅ FILTER by data month
                 ->first();
 
             // Check if any of the specified fields are null
@@ -920,6 +952,8 @@ class StudentReportController extends Controller
         return response()->json([
             'tuitionId' => $exactMatchingTuitions->pluck('id')->first(), // Send the first tuitionId
             'students' => $studentData, // Send the students data
+            'dataYear' => $dataYear, // Include the year for which data is shown (may be historical)
+            'isHistorical' => $gradeYear && $gradeYear < $currentYearMonth['year'], // Flag if viewing historical data
         ]);
     }
 
