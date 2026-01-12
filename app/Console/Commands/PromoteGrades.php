@@ -27,11 +27,17 @@ class PromoteGrades extends Command
      */
     protected $description = 'Promote all grades by one level for new academic year with full archival. 
                               Grade 11 becomes "Grade 11 2025", Grade 10 becomes "Grade 11 2026", etc.
+                              Grade 1a/1b are MERGED into single Grade 2. 
                               All changes are archived for historical reference.';
 
     private string $batchId;
     private int $fromYearId;
     private int $toYearId;
+    
+    /**
+     * Track Grade merge operations (e.g., Grade 1a/1b → Grade 2, Grade 2a/2b → Grade 3)
+     */
+    private array $gradeMergeData = [];
 
     /**
      * Execute the console command.
@@ -97,10 +103,10 @@ class PromoteGrades extends Command
         // Find Nursery grade for archival and deletion
         $nurseryGrade = $grades->first(fn($g) => preg_match('/^Nursery$/i', $g->grade_name));
         
-        // Define grade promotion mapping
+        // Define grade promotion mapping (includes merge detection for Grade 1a/1b)
         $promotionMap = $this->buildPromotionMap($grades, $newYear, $previousYear);
 
-        if (empty($promotionMap) && !$nurseryGrade) {
+        if (empty($promotionMap) && !$nurseryGrade && empty($this->gradeMergeData)) {
             $this->error('No grades found to promote!');
             return 1;
         }
@@ -120,6 +126,19 @@ class PromoteGrades extends Command
             $this->newLine();
         }
 
+        // Display Grade merge plans if applicable
+        if (!empty($this->gradeMergeData)) {
+            $this->warn('🔀 Grade A/B → Merged Grade Plans:');
+            foreach ($this->gradeMergeData as $gradeNum => $mergeInfo) {
+                $targetGrade = $gradeNum + 1;
+                $this->line("  • Grade {$gradeNum}a (ID: {$mergeInfo['gradeA']['id']}) → Grade {$targetGrade} (PRIMARY - will be renamed)");
+                $this->line("  • Grade {$gradeNum}b (ID: {$mergeInfo['gradeB']['id']}) → MERGED into Grade {$targetGrade} (will be archived & deleted)");
+                $this->line("  • All Grade {$gradeNum}b students will be migrated to Grade {$targetGrade} tuitions");
+                $this->line("  • Both groups unified into single Grade {$targetGrade} class");
+                $this->newLine();
+            }
+        }
+
         // Display archival plan for Nursery
         if ($nurseryGrade) {
             $this->warn('🗄️  Archival & Deletion Plan:');
@@ -137,6 +156,13 @@ class PromoteGrades extends Command
         $this->line("  • Total grades to update: " . count($promotionMap));
         $this->line("  • Grade 11 students → Grade 11 {$previousYear} (archived cohort)");
         $this->line("  • Grade 10 students → Grade 11 {$newYear} (new senior class)");
+        if (!empty($this->gradeMergeData)) {
+            $mergeGrades = [];
+            foreach ($this->gradeMergeData as $gradeNum => $info) {
+                $mergeGrades[] = "Grade {$gradeNum}a + Grade {$gradeNum}b → Grade " . ($gradeNum + 1);
+            }
+            $this->line("  • " . implode(", ", $mergeGrades) . " (MERGED into single class)");
+        }
         $this->line("  • Grade 1a/1b {$newYear} → Grade 1a/1b (incoming students)");
         if ($nurseryGrade) {
             $this->line("  • Nursery → ARCHIVED & DELETED, then fresh Nursery CREATED");
@@ -164,6 +190,13 @@ class PromoteGrades extends Command
                 // First, archive and delete Nursery data
                 if ($nurseryGrade) {
                     $this->archiveAndDeleteNurseryData($nurseryGrade->id, $performedBy);
+                }
+
+                // Execute Grade A/B → Merged Grade merges BEFORE normal promotions
+                if (!empty($this->gradeMergeData)) {
+                    foreach ($this->gradeMergeData as $gradeNum => $mergeInfo) {
+                        $this->executeGradeMerge($gradeNum, $mergeInfo, $performedBy, $previousYear, $newYear);
+                    }
                 }
 
                 $updatedCount = 0;
@@ -195,6 +228,14 @@ class PromoteGrades extends Command
                         $oldName = $grade->grade_name;
                         $grade->grade_name = $data['new'];
                         $grade->updated_at = now();
+                        
+                        // Set marking deadline for archived grades (Grade 11 YYYY)
+                        // Allow marking until end of February of the new year
+                        if ($data['action'] === 'archived' && preg_match('/^Grade\s*11\s+\d{4}$/i', $data['new'])) {
+                            $grade->marking_deadline = "{$newYear}-02-28";
+                            $this->line("    📅 Setting marking deadline to {$newYear}-02-28 for archived grade");
+                        }
+                        
                         $grade->save();
                         
                         $this->line("  ✅ [{$gradeId}] {$oldName} → {$data['new']} ({$affectedStudents} students)");
@@ -425,11 +466,39 @@ class PromoteGrades extends Command
 
     /**
      * Build the promotion map based on current grades.
+     * Handles Grade Na/Nb → Grade (N+1) merges for any paired grades.
      */
     private function buildPromotionMap($grades, $newYear, $previousYear): array
     {
         $map = [];
         $skipped = [];
+        
+        // First pass: identify all paired grades (e.g., Grade 1a/1b, Grade 2a/2b, etc.)
+        $pairedGrades = [];
+        
+        foreach ($grades as $grade) {
+            $name = $grade->grade_name;
+            // Match Grade Na or Grade Nb patterns (e.g., "Grade 1a", "Grade 2b")
+            if (preg_match('/^Grade\s*(\d+)\s*([ab])$/i', $name, $matches)) {
+                $gradeNum = (int)$matches[1];
+                $suffix = strtolower($matches[2]);
+                
+                if (!isset($pairedGrades[$gradeNum])) {
+                    $pairedGrades[$gradeNum] = ['a' => null, 'b' => null];
+                }
+                $pairedGrades[$gradeNum][$suffix] = $grade;
+            }
+        }
+        
+        // Set up merge operations for complete pairs (both a and b exist)
+        foreach ($pairedGrades as $gradeNum => $pair) {
+            if ($pair['a'] && $pair['b']) {
+                $this->gradeMergeData[$gradeNum] = [
+                    'gradeA' => ['id' => $pair['a']->id, 'name' => $pair['a']->grade_name],
+                    'gradeB' => ['id' => $pair['b']->id, 'name' => $pair['b']->grade_name],
+                ];
+            }
+        }
         
         foreach ($grades as $grade) {
             $name = $grade->grade_name;
@@ -482,11 +551,43 @@ class PromoteGrades extends Command
                 continue;
             }
             
-            // Handle Grades 1-9 (with optional letter suffix like 1a, 1b) - promote by one level
+            // SPECIAL: Handle Grade Na - if merge is active for this grade, promote to Grade (N+1) (no suffix)
+            if (preg_match('/^Grade\s*(\d+)\s*a$/i', $name, $matches)) {
+                $gradeNum = (int)$matches[1];
+                if (isset($this->gradeMergeData[$gradeNum])) {
+                    $newGradeNum = $gradeNum + 1;
+                    $map[$id] = [
+                        'id' => $id,
+                        'old' => $name,
+                        'new' => "Grade {$newGradeNum}",
+                        'action' => 'promoted+merged'
+                    ];
+                    continue;
+                }
+            }
+            
+            // SPECIAL: Skip Grade Nb from normal map if merge is active (will be handled separately)
+            if (preg_match('/^Grade\s*(\d+)\s*b$/i', $name, $matches)) {
+                $gradeNum = (int)$matches[1];
+                if (isset($this->gradeMergeData[$gradeNum])) {
+                    $newGradeNum = $gradeNum + 1;
+                    $skipped[] = "  ⏭️  Skipping 'Grade {$gradeNum}b' (ID: {$id}) - will be MERGED into Grade {$newGradeNum}";
+                    continue;
+                }
+            }
+            
+            // Handle Grades 1-9 (with optional letter suffix) - promote by one level
+            // For grades without merge context: normal promotion
             if (preg_match('/^Grade\s*(\d+)([a-z]?)$/i', $name, $matches)) {
                 $gradeNum = (int)$matches[1];
                 $suffix = $matches[2] ?? '';
                 
+                // Skip if this grade is part of an active merge (already handled above)
+                if (isset($this->gradeMergeData[$gradeNum]) && ($suffix === 'a' || $suffix === 'b')) {
+                    continue;
+                }
+                
+                // Standard promotion for grades 1-9
                 if ($gradeNum >= 1 && $gradeNum <= 9) {
                     $newGradeNum = $gradeNum + 1;
                     $map[$id] = [
@@ -495,8 +596,8 @@ class PromoteGrades extends Command
                         'new' => "Grade {$newGradeNum}{$suffix}",
                         'action' => 'promoted'
                     ];
+                    continue;
                 }
-                continue;
             }
             
             // For any other grades, log that they're being skipped
@@ -513,5 +614,229 @@ class PromoteGrades extends Command
         }
         
         return $map;
+    }
+    
+    /**
+     * Execute a Grade Na/Nb → Grade (N+1) merge operation.
+     * 
+     * This merges two separate groups (Grade Na and Grade Nb) into a single Grade (N+1).
+     * - Grade Na becomes Grade (N+1) (renamed)
+     * - Grade Nb students are migrated to Grade (N+1) tuitions, then Grade Nb is archived/deleted
+     */
+    private function executeGradeMerge($gradeNum, $mergeInfo, $performedBy, $previousYear, $newYear)
+    {
+        $targetGrade = $gradeNum + 1;
+        $this->newLine();
+        $this->info("🔀 Executing Grade {$gradeNum}a/{$gradeNum}b → Grade {$targetGrade} Merge...");
+        
+        $gradeAId = $mergeInfo['gradeA']['id'];
+        $gradeBId = $mergeInfo['gradeB']['id'];
+        $gradeAName = $mergeInfo['gradeA']['name'];
+        $gradeBName = $mergeInfo['gradeB']['name'];
+        
+        // Count students in each group before merge
+        $gradeAStudents = $this->countAffectedStudents($gradeAId);
+        $gradeBStudents = $this->countAffectedStudents($gradeBId);
+        
+        $this->line("  📊 Pre-merge statistics:");
+        $this->line("    • Grade {$gradeNum}a students: {$gradeAStudents}");
+        $this->line("    • Grade {$gradeNum}b students: {$gradeBStudents}");
+        $this->line("    • Total to be merged: " . ($gradeAStudents + $gradeBStudents));
+        
+        // Step 1: Get all tuitions linked to Grade Na (these will become Grade (N+1) tuitions)
+        $gradeATuitionIds = DB::table('tuitions_has_grades')
+            ->where('grade_id', $gradeAId)
+            ->pluck('tuition_id')
+            ->toArray();
+            
+        // Step 2: Get all tuitions linked to Grade Nb
+        $gradeBTuitionIds = DB::table('tuitions_has_grades')
+            ->where('grade_id', $gradeBId)
+            ->pluck('tuition_id')
+            ->toArray();
+            
+        $this->line("  📚 Tuition mappings:");
+        $this->line("    • Grade {$gradeNum}a tuitions: " . count($gradeATuitionIds));
+        $this->line("    • Grade {$gradeNum}b tuitions: " . count($gradeBTuitionIds));
+        
+        // Step 3: Archive Grade Nb grade
+        $gradeBRecord = DB::table('grades')->find($gradeBId);
+        DB::table('archived_grades')->insert([
+            'original_grade_id' => $gradeBId,
+            'grade_name' => $gradeBRecord->grade_name,
+            'academic_year_id' => $this->fromYearId,
+            'batch_id' => $this->batchId,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        $this->line("  ✅ Archived Grade {$gradeNum}b to archive table");
+        
+        // Step 4: Migrate Grade Nb student enrollments to Grade Na tuitions
+        $migratedStudents = 0;
+        $primaryGradeATuitionId = !empty($gradeATuitionIds) ? $gradeATuitionIds[0] : null;
+        
+        if ($primaryGradeATuitionId && !empty($gradeBTuitionIds)) {
+            // Build mapping of Grade Nb tuitions to Grade Na tuitions
+            $tuitionMapping = $this->buildTuitionMapping($gradeATuitionIds, $gradeBTuitionIds);
+            
+            foreach ($gradeBTuitionIds as $gradeBTuitionId) {
+                // Get target tuition (matched or primary)
+                $targetTuitionId = $tuitionMapping[$gradeBTuitionId] ?? $primaryGradeATuitionId;
+                
+                // Get students enrolled in this Grade Nb tuition
+                $studentEnrollments = DB::table('students_has_tuitions')
+                    ->where('tuition_id', $gradeBTuitionId)
+                    ->get();
+                
+                foreach ($studentEnrollments as $enrollment) {
+                    // Archive the original enrollment
+                    DB::table('archived_student_tuitions')->insert([
+                        'original_id' => $enrollment->id,
+                        'student_id' => $enrollment->student_id,
+                        'tuition_id' => $enrollment->tuition_id,
+                        'status' => $enrollment->status,
+                        'academic_year_id' => $this->fromYearId,
+                        'batch_id' => $this->batchId,
+                        'original_created_at' => $enrollment->created_at,
+                        'created_at' => now(),
+                        'updated_at' => now(),
+                    ]);
+                    
+                    // Check if student already enrolled in target tuition
+                    $existingEnrollment = DB::table('students_has_tuitions')
+                        ->where('student_id', $enrollment->student_id)
+                        ->where('tuition_id', $targetTuitionId)
+                        ->first();
+                    
+                    if (!$existingEnrollment) {
+                        // Create new enrollment in target tuition
+                        DB::table('students_has_tuitions')->insert([
+                            'student_id' => $enrollment->student_id,
+                            'tuition_id' => $targetTuitionId,
+                            'status' => $enrollment->status,
+                            'created_at' => now(),
+                            'updated_at' => now(),
+                        ]);
+                    }
+                    
+                    $migratedStudents++;
+                }
+                
+                // Migrate student reports from Grade Nb tuition to target tuition
+                DB::table('student_reports')
+                    ->where('tuition_id', $gradeBTuitionId)
+                    ->update(['tuition_id' => $targetTuitionId, 'updated_at' => now()]);
+            }
+        }
+        
+        $this->line("  ✅ Migrated {$migratedStudents} student enrollments from Grade {$gradeNum}b to Grade {$targetGrade}");
+        
+        // Step 5: Delete Grade Nb tuition associations
+        if (!empty($gradeBTuitionIds)) {
+            // Delete students_has_tuitions for Grade Nb tuitions
+            DB::table('students_has_tuitions')
+                ->whereIn('tuition_id', $gradeBTuitionIds)
+                ->delete();
+            $this->line("  ✅ Cleaned up old Grade {$gradeNum}b enrollment records");
+            
+            // Delete tuitions_has_grades for Grade Nb
+            DB::table('tuitions_has_grades')
+                ->where('grade_id', $gradeBId)
+                ->delete();
+            $this->line("  ✅ Removed Grade {$gradeNum}b tuition associations");
+            
+            // Delete the tuitions themselves
+            DB::table('tuitions')
+                ->whereIn('id', $gradeBTuitionIds)
+                ->delete();
+            $this->line("  ✅ Deleted Grade {$gradeNum}b tuitions");
+        }
+        
+        // Step 6: Log the merge to promotion history
+        DB::table('grade_promotion_history')->insert([
+            'batch_id' => $this->batchId,
+            'from_year_id' => $this->fromYearId,
+            'to_year_id' => $this->toYearId,
+            'grade_id' => $gradeBId,
+            'old_grade_name' => $gradeBName,
+            'new_grade_name' => "[MERGED INTO Grade {$targetGrade}]",
+            'action' => 'merged',
+            'affected_students' => $gradeBStudents,
+            'performed_by' => $performedBy,
+            'notes' => "Grade {$gradeNum}b merged into Grade {$targetGrade} (from Grade {$gradeNum}a). Students migrated to unified Grade {$targetGrade} class.",
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        
+        // Step 7: Delete Grade Nb grade record
+        DB::table('grades')->where('id', $gradeBId)->delete();
+        $this->line("  ✅ Deleted Grade {$gradeNum}b grade record (ID: {$gradeBId})");
+        
+        // Note: Grade Na → Grade (N+1) rename is handled in the main promotion map
+        $this->line("  ✅ Grade {$gradeNum}a will be renamed to 'Grade {$targetGrade}' in main promotion");
+        
+        $totalMerged = $gradeAStudents + $gradeBStudents;
+        $this->newLine();
+        $this->info("🎉 Merge complete! {$totalMerged} students now in unified Grade {$targetGrade}");
+    }
+    
+    /**
+     * Build mapping between Grade 1b tuitions and Grade 1a tuitions.
+     * Matches by day_id, category_id, and class_id for best correspondence.
+     */
+    private function buildTuitionMapping(array $grade1aTuitionIds, array $grade1bTuitionIds): array
+    {
+        $mapping = [];
+        
+        // Get full tuition details for Grade 1a
+        $grade1aTuitions = DB::table('tuitions')
+            ->whereIn('id', $grade1aTuitionIds)
+            ->get()
+            ->keyBy('id');
+        
+        // Get full tuition details for Grade 1b
+        $grade1bTuitions = DB::table('tuitions')
+            ->whereIn('id', $grade1bTuitionIds)
+            ->get();
+        
+        foreach ($grade1bTuitions as $grade1bTuition) {
+            $bestMatch = null;
+            
+            // Try to find exact match (same day, category, class)
+            foreach ($grade1aTuitions as $grade1aTuition) {
+                if ($grade1bTuition->day_id == $grade1aTuition->day_id &&
+                    $grade1bTuition->category_id == $grade1aTuition->category_id &&
+                    $grade1bTuition->class_id == $grade1aTuition->class_id) {
+                    $bestMatch = $grade1aTuition->id;
+                    break;
+                }
+            }
+            
+            // If no exact match, try matching by day and category
+            if (!$bestMatch) {
+                foreach ($grade1aTuitions as $grade1aTuition) {
+                    if ($grade1bTuition->day_id == $grade1aTuition->day_id &&
+                        $grade1bTuition->category_id == $grade1aTuition->category_id) {
+                        $bestMatch = $grade1aTuition->id;
+                        break;
+                    }
+                }
+            }
+            
+            // If still no match, try matching by day only
+            if (!$bestMatch) {
+                foreach ($grade1aTuitions as $grade1aTuition) {
+                    if ($grade1bTuition->day_id == $grade1aTuition->day_id) {
+                        $bestMatch = $grade1aTuition->id;
+                        break;
+                    }
+                }
+            }
+            
+            // If no match found, will use primary tuition (handled by caller)
+            $mapping[$grade1bTuition->id] = $bestMatch;
+        }
+        
+        return $mapping;
     }
 }

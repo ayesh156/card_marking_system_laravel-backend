@@ -14,6 +14,275 @@ composer install
 
 ---
 
+## 🧪 System Test API (January 2026)
+
+### Overview
+
+A simple API endpoint to verify the backend is running correctly on the server. Displays a creative animated UI showing system status.
+
+### API Endpoint
+
+| URL | Method | Description |
+|-----|--------|-------------|
+| `/api/test` | GET | Shows animated "API Working" page with system info |
+
+### What It Shows
+
+- ✓ **Animated checkmark** with bounce & pulse effects
+- 🚀 **"ONLINE & RUNNING"** glowing status badge
+- **Server Information:**
+  - ⏰ Server Time
+  - 🐘 PHP Version
+  - 🔧 Laravel Version
+  - 🌍 Timezone
+
+### Usage
+
+Simply visit:
+```
+https://your-domain.com/api/test
+```
+
+### Controller Location
+
+`app/Http/Controllers/SystemTestController.php`
+
+---
+
+## 🧹 Group Class Data Cleanup (January 2026)
+
+### Overview
+
+All student enrollments and reports for Group classes (Category ID 4) have been removed from the database. The Group tuitions still exist but have no students enrolled.
+
+### What Was Removed
+
+| Data Type | Count Removed |
+|-----------|---------------|
+| Student Reports | 452 |
+| Student Enrollments | 50 |
+
+### Affected Tuition IDs
+
+`3, 5, 36, 37, 38, 39, 40, 41, 42, 43, 44`
+
+### SQL Commands Used
+
+```sql
+-- Delete reports
+DELETE FROM student_reports WHERE tuition_id IN (3,5,36,37,38,39,40,41,42,43,44);
+
+-- Delete enrollments
+DELETE FROM students_has_tuitions WHERE tuition_id IN (3,5,36,37,38,39,40,41,42,43,44);
+```
+
+### Verification Query
+
+```sql
+-- Should return 0 for both
+SELECT 
+  (SELECT COUNT(*) FROM students_has_tuitions WHERE tuition_id IN (3,5,36,37,38,39,40,41,42,43,44)) as enrollments,
+  (SELECT COUNT(*) FROM student_reports WHERE tuition_id IN (3,5,36,37,38,39,40,41,42,43,44)) as reports;
+```
+
+---
+
+## 🔧 Student Form Duplicate Fix (January 2026)
+
+### Overview
+
+Fixed an issue where selecting an existing student from the autocomplete would create a duplicate record instead of updating the existing student.
+
+### Problem
+
+When a user searched for an existing student and selected them from the autocomplete dropdown, clicking "Add" would create a new student record instead of recognizing it as an existing student.
+
+### Solution
+
+Updated `StudentPage.jsx` to check if the form has an `id` value before deciding whether to create or update:
+
+```javascript
+// Before (buggy)
+if (existingStudent) {
+    // update
+} else {
+    // create
+}
+
+// After (fixed)
+if (values.id) {
+    // update existing student
+} else {
+    // create new student
+}
+```
+
+### File Changed
+
+`react-front/src/views/StudentPage.jsx` - `handleFormSubmit` function
+
+---
+
+## 📅 Archived Grade Marking Deadline Feature (January 2026)
+
+### Overview
+
+Archived grades like "Grade 11 2025" can now be marked (attendance and payment) until a specific deadline date. This allows teachers to complete marking for students who have graduated or moved to the next academic year.
+
+### How It Works
+
+| Grade | Marking Deadline | Can Mark Until |
+|-------|-----------------|----------------|
+| Grade 11 2025 | 2026-02-28 | End of February 2026 |
+| Grade 11 2026 | 2027-02-28 | End of February 2027 |
+| Regular Grades | No deadline | Always |
+
+### Database Migration
+
+```bash
+php artisan migrate
+```
+
+**Migration file:** `2026_01_12_000000_add_marking_deadline_to_grades_table.php`
+
+This migration:
+- Adds `marking_deadline` column to `grades` table
+- Sets Grade 11 2025 deadline to 2026-02-28
+
+### API Response Changes
+
+The `fetchStudentData` endpoint now returns two additional fields:
+
+```json
+{
+  "tuitionId": 19,
+  "students": [...],
+  "dataYear": 2025,
+  "isHistorical": true,
+  "canBeMarked": true,
+  "markingDeadline": "2026-02-28"
+}
+```
+
+| Field | Description |
+|-------|-------------|
+| `canBeMarked` | `true` if marking is still allowed, `false` if deadline passed |
+| `markingDeadline` | The deadline date (YYYY-MM-DD) or `null` for regular grades |
+
+### Automatic Deadline Setting
+
+When running grade promotions, archived grades automatically receive a marking deadline:
+
+```bash
+php artisan grades:promote --year=2027
+```
+
+This will set `Grade 11 2026` marking deadline to `2027-02-28`.
+
+### Manual Deadline Update
+
+To manually set or update a marking deadline:
+
+```sql
+-- Set deadline for Grade 11 2025
+UPDATE grades SET marking_deadline = '2026-02-28' WHERE grade_name = 'Grade 11 2025';
+
+-- Remove deadline (allow indefinite marking)
+UPDATE grades SET marking_deadline = NULL WHERE grade_name = 'Grade 11 2025';
+```
+
+---
+
+## 🎓 English Group Classes (Grade 2 - Grade 10)
+
+### Overview
+
+English Group classes have been added for grades 2 through 10. These are Saturday classes under the "Group" category.
+
+### Adding English Group Classes
+
+Run the SQL script to add tuitions:
+
+```bash
+# From MySQL client or HeidiSQL
+SOURCE database/sql/add_english_group_classes_grade2_to_grade10.sql;
+```
+
+### Class Schedule
+
+| Day | Category | Class | Grades |
+|-----|----------|-------|--------|
+| Saturday | Group | English | Grade 2, 3, 4, 5, 6, 7, 8, 9, 10 |
+
+### SQL Script Location
+
+`database/sql/add_english_group_classes_grade2_to_grade10.sql`
+
+### Verification Query
+
+```sql
+-- Check all English Group tuitions
+SELECT t.id as tuition_id, d.day_name, c.category_name, cl.class_name, g.grade_name
+FROM tuitions t
+JOIN days d ON t.day_id = d.id
+JOIN categories c ON t.category_id = c.id
+JOIN classes cl ON t.class_id = cl.id
+JOIN tuitions_has_grades thg ON t.id = thg.tuition_id
+JOIN grades g ON thg.grade_id = g.id
+WHERE t.category_id = 4 AND t.class_id = 1
+ORDER BY g.id;
+```
+
+---
+
+## 🔄 Student Identification System Update (January 2026)
+
+### Overview
+
+The student identification system has been simplified by removing the custom `sno` (Student Number) field. The system now uses the standard database `id` (auto-increment primary key) as the unique identifier for all students.
+
+### Database Migration
+
+A migration was created to remove the `sno` column:
+
+```bash
+# Run the migration
+php artisan migrate
+```
+
+**Migration file:** `2026_01_05_150746_remove_sno_from_students_table.php`
+
+### Backend Changes
+
+| File | Change |
+|------|--------|
+| `app/Models/Student.php` | Removed `sno` from `$fillable` array |
+| `app/Http/Requests/StudentRequest.php` | Removed `sno` validation rules |
+| `app/Http/Controllers/StudentController.php` | Changed `updateStatus($sno)` to `updateStatus($id)` |
+| `routes/api.php` | Changed route from `/student/status/{sno}` to `/student/status/{id}` |
+| `app/Http/Controllers/StudentReportController.php` | Removed `sno` from API responses |
+
+### API Changes
+
+| Endpoint | Before | After |
+|----------|--------|-------|
+| Update Status | `PUT /api/student/status/{sno}` | `PUT /api/student/status/{id}` |
+
+### Impact on Grade Promotion
+
+✅ **No impact on grade promotion system!**
+
+The grade promotion commands (`grades:promote` and `grades:merge`) were already designed to use `student_id` (primary key) for all operations. They never relied on the `sno` field.
+
+### Data Preservation
+
+- Existing student data is fully preserved
+- The `id` column (primary key) remains unchanged
+- All relationships (`students_has_tuitions`, `student_reports`) continue to work
+- Historical data in archive tables is unaffected
+
+---
+
 ## 📚 Annual Grade Promotion System
 
 ### Overview
@@ -28,10 +297,22 @@ The `grades:promote` command performs the following operations:
 |--------------|-----------|--------|
 | Grade 11 | Grade 11 {previousYear} | **Archived** - Graduating class preserved with year label |
 | Grade 10 | Grade 11 {newYear} | **Promoted** - New senior class |
-| Grade 9 → Grade 1 | +1 level | **Promoted** - Move up one grade |
+| Grade 9 → Grade 2 | +1 level | **Promoted** - Move up one grade |
+| **Grade 1a + Grade 1b** | **Grade 2** | **🔀 MERGED** - Both groups combined into single Grade 2 |
 | Grade 1a/1b {newYear} | Grade 1a/1b | **Renamed** - Incoming students (if pre-created) |
 | Nursery | [ARCHIVED & DELETED] | **Archived** - Data preserved, then deleted |
 | [NEW] | Nursery | **Created** - Fresh Nursery class for new academic year |
+
+### Grade 1a/1b → Grade 2 Merge Feature
+
+**Key Feature:** When students complete Grade 1 (which is split into Group A and Group B), they are automatically **merged into a single unified Grade 2 class**.
+
+**How the merge works:**
+1. **Grade 1a becomes Grade 2** (renamed, keeps its tuitions)
+2. **Grade 1b students are migrated** to Grade 2 tuitions
+3. **Grade 1b is archived** (historical data preserved) then deleted
+4. **Student enrollments are intelligently mapped** - Grade 1b tuitions are matched to Grade 1a tuitions by day/category/class
+5. **Student reports are preserved** and linked to the new tuitions
 
 ### Data Protection
 
@@ -97,8 +378,25 @@ JOIN students_has_tuitions sht ON s.id = sht.student_id
 JOIN years y ON sht.academic_year_id = y.id
 WHERE y.year = 2025;
 
--- View all archived grades
+-- View all archived grades (including merged Grade 1b)
 SELECT * FROM archived_grades ORDER BY academic_year_id;
+
+-- Find all merged student enrollments from Grade 1b
+SELECT ast.*, s.name as student_name, gph.notes
+FROM archived_student_tuitions ast
+JOIN students s ON ast.student_id = s.id
+JOIN grade_promotion_history gph ON ast.batch_id = gph.batch_id
+WHERE gph.action = 'merged';
+
+-- Track a student's promotion history across years
+SELECT s.name, gph.old_grade_name, gph.new_grade_name, gph.action, y.year as promotion_year
+FROM students s
+JOIN students_has_tuitions sht ON s.id = sht.student_id
+JOIN tuitions_has_grades thg ON sht.tuition_id = thg.tuition_id
+JOIN grade_promotion_history gph ON thg.grade_id = gph.grade_id
+JOIN years y ON gph.to_year_id = y.id
+WHERE s.id = YOUR_STUDENT_ID
+ORDER BY y.year;
 ```
 
 ### Example: Year-by-Year Progression
@@ -110,22 +408,59 @@ Nursery, Grade 1a, Grade 1b, Grade 2, Grade 3...Grade 11
 
 **After 2026 Promotion:**
 ```
-Grade 1a, Grade 1b (from Grade 1a/1b 2026 - incoming)
-Grade 2a, Grade 2b (from Grade 1a, 1b)
-Grade 3 (from Grade 2)...Grade 10 (from Grade 9)
+Nursery (fresh - created new)
+Grade 1a, Grade 1b (from Grade 1a/1b 2026 - incoming students)
+Grade 2 (🔀 MERGED from Grade 1a + Grade 1b - single unified class!)
+Grade 3 (from Grade 2)
+Grade 4 (from Grade 3)
+...
+Grade 10 (from Grade 9)
 Grade 11 2026 (from Grade 10 - current seniors)
 Grade 11 2025 (from Grade 11 - archived graduating class)
-[Nursery archived and deleted]
 ```
 
 **After 2027 Promotion:**
 ```
+Nursery (fresh - created new)
 Grade 1a, Grade 1b (from Grade 1a/1b 2027 - incoming)
-Grade 2a, Grade 2b (from Grade 1a, 1b)
-Grade 3 (from Grade 2)...Grade 10 (from Grade 9)
+Grade 2 (🔀 MERGED from Grade 1a + Grade 1b)
+Grade 3 (from Grade 2)
+...
+Grade 10 (from Grade 9)
 Grade 11 2027 (from Grade 10 - current seniors)
 Grade 11 2026 (preserved - graduated class)
 Grade 11 2025 (preserved - graduated class)
+```
+
+### Data Flow Visualization
+
+```
+Year N:                          Year N+1:
+┌─────────────┐                  
+│   Nursery   │ ──────────────── [ARCHIVED & DELETED]
+└─────────────┘                  
+                                 ┌─────────────┐
+                                 │   Nursery   │ (NEW - fresh class)
+                                 └─────────────┘
+┌─────────────┐                  
+│  Grade 1a   │ ─────┐           
+└─────────────┘      │ MERGE     ┌─────────────┐
+                     ├─────────► │   Grade 2   │ (unified class)
+┌─────────────┐      │           └─────────────┘
+│  Grade 1b   │ ─────┘           
+└─────────────┘                  
+
+┌─────────────┐                  ┌─────────────┐
+│   Grade 2   │ ───────────────► │   Grade 3   │
+└─────────────┘                  └─────────────┘
+       ...                              ...
+┌─────────────┐                  ┌─────────────┐
+│  Grade 10   │ ───────────────► │ Grade 11 N+1│ (seniors)
+└─────────────┘                  └─────────────┘
+
+┌─────────────┐                  ┌─────────────┐
+│  Grade 11   │ ───────────────► │ Grade 11 N  │ (archived)
+└─────────────┘                  └─────────────┘
 ```
 
 ### Important Notes
@@ -137,6 +472,46 @@ Grade 11 2025 (preserved - graduated class)
 ⚠️ **Ensure the target year exists in the `years` table** (the command will create it if missing)
 
 ⚠️ **Pre-create incoming Grade 1 classes** with year suffix (e.g., "Grade 1a 2027") before promotion if you have new students to add
+
+⚠️ **Grade 1a/1b merge is automatic** - When both Grade 1a and Grade 1b exist, they will be merged into a single Grade 2
+
+### Understanding the Merge Process
+
+When the promotion runs and finds both `Grade 1a` and `Grade 1b`:
+
+1. **Student Migration**: All Grade 1b students are enrolled in Grade 2 tuitions
+2. **Tuition Matching**: Grade 1b tuitions are matched to Grade 1a tuitions by:
+   - Same day + category + class (best match)
+   - Same day + category (good match)
+   - Same day (fallback match)
+   - Primary tuition (last resort)
+3. **Data Preservation**: Original Grade 1b enrollments are archived
+4. **Report Migration**: Student reports are moved to the new tuition IDs
+5. **Cleanup**: Grade 1b tuitions and grade record are deleted
+
+### Manual Grade Merge Command
+
+If you need to manually merge grades (e.g., if a promotion ran before the merge feature was added):
+
+```bash
+# Preview merge
+php artisan grades:merge "Grade 2a" "Grade 2b" --dry-run
+
+# Execute merge
+php artisan grades:merge "Grade 2a" "Grade 2b" --performed-by="Admin Name"
+
+# Custom target name
+php artisan grades:merge "Grade 2a" "Grade 2b" --target="Grade 2" --performed-by="Admin"
+```
+
+#### Merge Command Options
+| Option | Description | Default |
+|--------|-------------|---------|
+| `gradeA` | Primary grade (will be renamed) | Required |
+| `gradeB` | Grade to merge into primary | Required |
+| `--target=NAME` | Target grade name | Removes suffix from gradeA |
+| `--dry-run` | Preview without changes | false |
+| `--performed-by=NAME` | Who performed merge | system |
 
 ---
 

@@ -64,15 +64,15 @@ class StudentController extends Controller
         return response()->json($students);
     }
 
-    public function updateStatus($sno, Request $request)
+    public function updateStatus($id, Request $request)
     {
         // Validate the request
         $request->validate([
             'tuitionId' => 'required|exists:tuitions,id', // Ensure tuitionId exists in the tuitions table
         ]);
     
-        // Find the student by sno
-        $student = Student::where('sno', $sno)->first();
+        // Find the student by id
+        $student = Student::find($id);
     
         if (!$student) {
             return response()->json(['message' => 'Student not found'], 404);

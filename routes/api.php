@@ -33,7 +33,7 @@ Route::put('/student/{id}', [StudentController::class, 'update']);
 
 Route::get('/student/{id}', [StudentController::class, 'show']);
 Route::get('/students/search', [StudentController::class, 'search']);
-Route::put('/student/status/{sno}', [StudentController::class, 'updateStatus']);
+Route::put('/student/status/{id}', [StudentController::class, 'updateStatus']);
 Route::get('/history', [StudentReportController::class, 'history']);
 Route::post('/send-whatsapp-messages', [StudentReportController::class, 'sendWhatsAppMessages']);
 Route::post('/update-day', [ClassesController::class, 'updateDay']);
@@ -58,3 +58,6 @@ Route::get('/send-payment-reminders', [StudentReportController::class, 'sendPaym
 
 
 Route::post('/update-paid-status', [StudentReportController::class, 'updatePaidStatusHistory']);
+
+// System Test Route
+Route::get('/test', [\App\Http\Controllers\SystemTestController::class, 'simpleTest']);

@@ -85,7 +85,7 @@ class SidebarController extends Controller
 
         return [
             'category_name' => $categoryName,
-            'grades' => array_unique($processedGrades), // Ensure unique grades
+            'grades' => array_values(array_unique($processedGrades)), // Ensure unique grades as sequential array
         ];
     })->values();
 

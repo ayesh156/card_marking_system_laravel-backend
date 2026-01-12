@@ -22,7 +22,6 @@ class StudentRequest extends FormRequest
     public function rules(): array
     {
         $rules = [
-            'sno' => 'required|string', // Remove the unique rule here
             'name' => 'required|string|max:100',
             'address1' => 'nullable|string',
             'address2' => 'nullable|string',
@@ -36,18 +35,11 @@ class StudentRequest extends FormRequest
             'tuitionId' => 'required|exists:tuitions,id', // Ensure tuitionId exists in the tuitions table
         ];
 
-        // Apply the unique rule only when creating a new student
-        if ($this->isMethod('post')) { // Check if the request is a POST (create)
-            $rules['sno'] .= '|unique:students,sno';
-        }
-
         return $rules;
     }
 
     public function messages(): array
     {
-        return [
-            'sno.unique' => 'This Student No has already been taken.', // Custom error message for duplicate sno
-        ];
+        return [];
     }
 }

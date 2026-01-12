@@ -933,7 +933,6 @@ class StudentReportController extends Controller
 
             return [
                 'child_id' => $student->id,
-                'sno' => $student->sno,
                 'child_name' => $student->name,
                 'gWhatsapp' => $student->g_whatsapp,
                 'gWhatsapp2' => $student->g_whatsapp2,
@@ -949,11 +948,22 @@ class StudentReportController extends Controller
             ];
         });
 
+        // Check if the grade can be marked (for archived grades with marking deadline)
+        $canBeMarked = true;
+        $markingDeadline = null;
+        $gradeRecord = Grade::whereIn('grade_name', $grades)->first();
+        if ($gradeRecord) {
+            $canBeMarked = $gradeRecord->canBeMarked();
+            $markingDeadline = $gradeRecord->marking_deadline?->format('Y-m-d');
+        }
+
         return response()->json([
             'tuitionId' => $exactMatchingTuitions->pluck('id')->first(), // Send the first tuitionId
             'students' => $studentData, // Send the students data
             'dataYear' => $dataYear, // Include the year for which data is shown (may be historical)
             'isHistorical' => $gradeYear && $gradeYear < $currentYearMonth['year'], // Flag if viewing historical data
+            'canBeMarked' => $canBeMarked, // Flag if this grade can still be marked
+            'markingDeadline' => $markingDeadline, // Deadline date for marking (if applicable)
         ]);
     }
 
@@ -1081,7 +1091,6 @@ class StudentReportController extends Controller
             return [
                 'child_id' => $student->id,
                 'child_name' => $student->name,
-                'sno' => $student->sno,
                 'gWhatsapp' => $student->g_whatsapp,
                 'created_at' => $student->created_at,
                 'week1' => boolval($report->week1 ?? false), // Cast to boolean
