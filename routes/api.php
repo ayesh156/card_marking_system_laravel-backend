@@ -58,6 +58,7 @@ Route::get('/send-payment-reminders', [StudentReportController::class, 'sendPaym
 
 
 Route::post('/update-paid-status', [StudentReportController::class, 'updatePaidStatusHistory']);
+Route::post('/update-week-status-history', [StudentReportController::class, 'updateWeekStatusHistory']);
 
 // System Test Route
 Route::get('/test', [\App\Http\Controllers\SystemTestController::class, 'simpleTest']);

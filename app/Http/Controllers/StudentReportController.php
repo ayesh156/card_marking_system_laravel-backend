@@ -367,46 +367,101 @@ class StudentReportController extends Controller
         $year = $request->year;
         $month = $request->month;
 
-        // Find year and month IDs
-        $yearRecord = Year::where('year', $year)->first();
+        // Auto-create year record if it doesn't exist
+        $yearRecord = Year::firstOrCreate(['year' => $year]);
         $monthRecord = Month::where('id', $month)->first();
-        if (!$yearRecord || !$monthRecord) {
-            return response()->json(['message' => 'Invalid year or month.'], 404);
+        if (!$monthRecord) {
+            return response()->json(['message' => 'Invalid month.'], 404);
         }
         $yearId = $yearRecord->id;
         $monthId = $monthRecord->id;
 
-        // Find or create the student report
-        $childReport = StudentReport::where('student_id', $studentId)
-            ->where('tuition_id', $tuitionId)
-            ->where('year_id', $yearId)
-            ->where('month_id', $monthId)
-            ->first();
-
-        if (!$childReport) {
-            $childReport = StudentReport::create([
+        // Find or create the student report for this student/tuition/month/year
+        $childReport = StudentReport::firstOrCreate(
+            [
                 'student_id' => $studentId,
                 'tuition_id' => $tuitionId,
                 'year_id' => $yearId,
                 'month_id' => $monthId,
-                'paid' => $request->paid,
+            ],
+            [
                 'week1' => false,
                 'week2' => false,
                 'week3' => false,
                 'week4' => false,
                 'week5' => false,
-            ]);
-        } else {
-            $childReport->update([
-                'paid' => $request->paid,
-            ]);
-        }
+                'paid' => false,
+            ]
+        );
 
-        // DO NOT send WhatsApp message here
+        // Update the paid status
+        $childReport->update([
+            'paid' => $request->paid,
+        ]);
 
         return response()->json([
             'message' => 'Paid status updated successfully (no WhatsApp sent).',
             'data' => $childReport
+        ], 200);
+    }
+
+    /**
+     * Update week status for a specific month/year in history.
+     * No WhatsApp messages are sent.
+     */
+    public function updateWeekStatusHistory(Request $request)
+    {
+        $request->validate([
+            'child_id' => 'required|exists:students,id',
+            'tuition_id' => 'required|exists:tuitions,id',
+            'week' => 'required|string|in:week1,week2,week3,week4,week5',
+            'value' => 'required|boolean',
+            'month' => 'required',
+            'year' => 'required',
+        ]);
+
+        $studentId = $request->child_id;
+        $tuitionId = $request->tuition_id;
+        $week = $request->week;
+        $value = $request->value;
+        $year = $request->year;
+        $month = $request->month;
+
+        // Auto-create year record if it doesn't exist
+        $yearRecord = Year::firstOrCreate(['year' => $year]);
+        $monthRecord = Month::where('id', $month)->first();
+        if (!$monthRecord) {
+            return response()->json(['message' => 'Invalid month.'], 404);
+        }
+        $yearId = $yearRecord->id;
+        $monthId = $monthRecord->id;
+
+        // Find or create the student report for this student/tuition/month/year
+        $childReport = StudentReport::firstOrCreate(
+            [
+                'student_id' => $studentId,
+                'tuition_id' => $tuitionId,
+                'year_id' => $yearId,
+                'month_id' => $monthId,
+            ],
+            [
+                'week1' => false,
+                'week2' => false,
+                'week3' => false,
+                'week4' => false,
+                'week5' => false,
+                'paid' => false,
+            ]
+        );
+
+        // Now update the specific week
+        $childReport->update([
+            $week => $value,
+        ]);
+
+        return response()->json([
+            'message' => 'Week status updated successfully.',
+            'data' => $childReport,
         ], 200);
     }
 
@@ -973,12 +1028,12 @@ class StudentReportController extends Controller
         $year = $request->query('year'); // Get year from the request
         $month = $request->query('month'); // Get month from the request
 
-        // Validate the year and month
-        $yearRecord = Year::where('year', $year)->first();
+        // Auto-create year record if it doesn't exist, validate month
+        $yearRecord = Year::firstOrCreate(['year' => $year]);
         $monthRecord = Month::where('id', $month)->first();
 
-        if (!$yearRecord || !$monthRecord) {
-            return response()->json(['message' => 'Invalid year or month.'], 404);
+        if (!$monthRecord) {
+            return response()->json(['message' => 'Invalid month.'], 404);
         }
 
         $yearId = $yearRecord->id;
@@ -1093,12 +1148,12 @@ class StudentReportController extends Controller
                 'child_name' => $student->name,
                 'gWhatsapp' => $student->g_whatsapp,
                 'created_at' => $student->created_at,
-                'week1' => boolval($report->week1 ?? false), // Cast to boolean
-                'week2' => boolval($report->week2 ?? false), // Cast to boolean
-                'week3' => boolval($report->week3 ?? false), // Cast to boolean
-                'week4' => boolval($report->week4 ?? false), // Cast to boolean
-                'week5' => boolval($report->week5 ?? false), // Cast to boolean
-                'paid' => boolval($report->paid ?? false),   // Cast to boolean
+                'week1' => $report ? (bool) $report->week1 : false,
+                'week2' => $report ? (bool) $report->week2 : false,
+                'week3' => $report ? (bool) $report->week3 : false,
+                'week4' => $report ? (bool) $report->week4 : false,
+                'week5' => $report ? (bool) $report->week5 : false,
+                'paid' => $report ? (bool) $report->paid : false,
                 'register' => $isRegistered,                // Add register status
                 'status' => $studentStatuses[$student->id] ?? null, // Fetch the status from 'students_has_tuitions'
                 'notpaid' => $notPaid,                      // Add notpaid status

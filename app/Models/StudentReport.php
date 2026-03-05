@@ -22,6 +22,15 @@ class StudentReport extends Model
         'paid',
     ];
 
+    protected $casts = [
+        'week1' => 'boolean',
+        'week2' => 'boolean',
+        'week3' => 'boolean',
+        'week4' => 'boolean',
+        'week5' => 'boolean',
+        'paid' => 'boolean',
+    ];
+
     /**
      * Define the relationship with the Student model.
      */
